@@ -1,53 +1,90 @@
 ﻿using System;
 using System.Linq;
+using System.Collections.Generic;
 using System.Threading;
+using System.Net.Http;
 
 using VkNet;
 using VkNet.Model;
 using VkNet.Model.RequestParams;
+using VkNet.Enums.Filters;
 
 namespace ChatBot
 
 {
     static class Program
     {
-        // Put your accss token here
-        const string _accessToken = "Put your accss token here";
-
         const string _firstGoodMessage = "БОТ:\nДень добрый! Вам пора выбрать время для встречи!";
         const string _refirstMessage   = "БОТ:\nДень добрый! Вы по-прежнему не встретились в этом месяце. :(\nВыберите время для встречи!";
         const string _firstBadMessage  = "БОТ:\nДень добрый! Вы так и не погуляли в прошлом месяце! :'(\nВам пора выбрать время для встречи!";
 
-        static string[] _restMessages  = 
+        static string[] _restMessagesSingular =
             {
-                "БОТ:\nНу не молчите... Начните, пожалуйста, обсуждение!",
-                "БОТ:\nУже два часа прошло, а вы все не начнете обсуждать вашу будущую прогулку!",
-                "БОТ:\n@id182929580 (Саша), может ты первым начнешь этот разовор?..",
-                "БОТ:\nА может ты, @l_macabre (Лада)?..",
-                "БОТ:\n@n0t_kill (Петя), ну хоть ты начни ваш диалог!",
-                "БОТ:\nВы что, не хотите гулять?",
-                "БОТ:\nЭх вы... Больше не буду вам писать на этой неделе..."
+                "БОТ:\n{0}, ты по-прежнему не участвуешь в коммуникации!",
+                "БОТ:\n{0}, уже два часа прошло, а ты всё не обсуждаешь вашу будущую прогулку!",
+                "БОТ:\n{0}, может, ты обратишь внимание на этот чат?..",
+                "БОТ:\n{0}, ты заставляешь друзей ждать!..",
+                "БОТ:\n{0}, подай признаки жизнедеятельности!",
+                "БОТ:\n{0}, ты что, не хочешь гулять?",
+                "БОТ:\n{0}, я сдаюсь... Я так и не смог привлечь твое внимание... Напишу в этот чат на следующей неделе."
             };
 
-        const string _goodMessage  = "БОТ:\nМоя задача выполнена!\nВы начали коммуницировать.";
+        static string[] _restMessagesPlural =
+        {
+                "БОТ:\n{0}, вы по-прежнему не участвуете в коммуникации!",
+                "БОТ:\n{0}, уже два часа прошло, а вы всё не обсуждаете вашу будущую прогулку!",
+                "БОТ:\n{0}, может, вы обратите внимание на этот чат?..",
+                "БОТ:\n{0}, вы заставляете друга ждать!..",
+                "БОТ:\n{0}, подайте признаки жизнедеятельности!",
+                "БОТ:\n{0}, вы что, не хотите гулять?",
+                "БОТ:\n{0}, я сдаюсь... Я так и не смог привлечь ваше внимание... Напишу в этот чат на следующей неделе."
+            };
+
+        const string _goodMessage  = "БОТ:\nВы начали коммуницировать.\nМоя задача выполнена!";
 
         const string _solutionFile = "PeterSolution.txt";
 
         const bool isTest = false;
 
         const long _chatID = isTest ? 80 : 62;
-        static int _maxRepeats = _restMessages.Length;
+        static int _maxRepeats = _restMessagesSingular.Length;
 
         const int fiveMinutes = isTest ? 1000 : 1000 * 60 * 5;
         const int oneHour = isTest ? 1000 : fiveMinutes * 12;
 
+        static string _accessToken;
         static VkApi _api;
-        static string _logPath;
-            
+        static List<User> _users;
+
+        static Logger _logger;
+
+        static long ChatID
+        {
+            get
+            {
+                return _chatID + 2000000000;
+            }
+        }
+
         static void Main(string[] args)
         {
-            _logPath = Logger.CreateLog();
-            Logger.WriteInLog(_logPath, string.Format("Начало работы для чата #{0}.", _chatID));
+            _logger = new Logger();
+
+            try
+            {
+                BotMain(isTest);
+            }
+            catch (Exception e)
+            {
+                _logger.WriteInLog(string.Format("Исключение во время исполнения:\n{0}", e));
+            }
+        }
+
+        static void BotMain(bool isTest)
+        {
+            var botMessages = new List<long>();
+
+            _logger.WriteInLog(string.Format("Начало работы для чата #{0}.", _chatID));
 
             var isFirstWeek = DateTime.Now.Day <= 7;
 
@@ -56,84 +93,154 @@ namespace ChatBot
             if (!isTest && isFirstWeek)
             {
                 Reader.ReCreate(_solutionFile);
-                Logger.WriteInLog(_logPath, "Обновление информации о прогулке в начале месяца.");
+                _logger.WriteInLog("Обновление информации о прогулке в начале месяца.");
             }
 
             var wasWalk = Reader.ReadFrom(_solutionFile);
 
             if (!isTest && wasWalk)
             {
-                Logger.WriteInLog(_logPath, "Прогулка уже состоялась. Завершение работы бота.");
+                _logger.WriteInLog("Прогулка уже состоялась. Завершение работы бота.");
                 return;
             }
 
-            Logger.WriteInLog(_logPath, "Оповещение необходимо.");
+            _logger.WriteInLog("Оповещение необходимо.");
+
+            _accessToken = System.Configuration.ConfigurationManager.AppSettings["access_token"];
+
+            if (string.IsNullOrEmpty(_accessToken))
+            {
+                _logger.WriteInLog("Access Token не обнаружен в конфигурационном файле. Дальнейцая работа невозможна.");
+                return;
+            }
 
             _api = new VkApi();
             _api.Authorize(new ApiAuthParams { AccessToken = _accessToken });
+            initUsers();
 
-            var myMessageID = sendMessage(isFirstWeek ? (wasWalkBeforeReCreate ? _firstGoodMessage : _firstBadMessage) : _refirstMessage);
+            var firstText = isFirstWeek ? (wasWalkBeforeReCreate ? _firstGoodMessage : _firstBadMessage) : _refirstMessage;
+            var botMessageID = sendMessage(firstText);
+            botMessages.Add(botMessageID);
 
             for (int i = 0; i < _maxRepeats; ++i)
             {
                 Thread.Sleep(oneHour);
 
-                var lastMessageID = getLastMessageID();
+                var authors = getUsersAfterBot(botMessages);
 
-                if (lastMessageID != myMessageID)
+                if (authors.Count() < _users.Count)
                 {
-                    Logger.WriteInLog(_logPath, "Кто-то писал в чате.");
+                    _logger.WriteInLog("Не все пользователи написали в чате.");
+                    var msgTemplate = _users.Count - authors.Count() == 1 ? _restMessagesSingular[i] : _restMessagesPlural[i];
+                    var appeal = createAppeal(authors);
+                    var id = sendMessage(string.Format(msgTemplate, appeal));
+                    botMessages.Add(id);
+                }
+                else
+                {
+                    _logger.WriteInLog("Каждый пользователь написал в чате.");
                     sendMessage(_goodMessage);
                     return;
                 }
-
-                myMessageID = sendMessage(_restMessages[i]);
             }
         }
 
-        static long? getLastMessageID()
+        static void initUsers()
         {
-            Logger.WriteInLog(_logPath, "Получение последнего сообщения.");
-            var id = getLastMessageID_withoutLog();
-            Logger.WriteInLog(_logPath, string.Format("Получено ID последнего сообщения: {0}.", id));
-            return id;
+            Func<IEnumerable<User>> get = () =>
+              _api.Messages.GetChatUsers(new long[] { _chatID }, UsersFields.Domain, null);
+
+            _logger.WriteInLog(string.Format("Получение информации о чате #{0}.", _chatID));
+            _users = perform(get, "Неудача при получении информации о чате.").ToList();
+            _logger.WriteInLog(string.Format("В чате #{0} учавствуют: {1}.", _chatID, createAppeal(new List<long>())));
         }
 
-        static long? getLastMessageID_withoutLog()
+        static IEnumerable<long> getUsersAfterBot(List<long> botMessageIDs)
         {
-            try
+            _logger.WriteInLog("Получение идентификаторов активных пользователей.");
+            var ids = perform(() => getUsersAfterBot_loc(botMessageIDs), "Неудача при получении идентификаторов активных пользователей.");
+            _logger.WriteInLog(string.Format("Получены идентификаторы активных пользователей: [{0}].", string.Join(", ", ids)));
+            return ids;
+        }
+
+        static IEnumerable<long> getUsersAfterBot_loc(List<long> botMessageIDs)
+        {
+            Func<IEnumerable<Message>, IEnumerable<long>> ms2AIDs =
+                ms => ms.Where(m => botMessageIDs.All(bid => bid != m.Id))
+                        .Select(m => m.FromId)
+                        .Where(i => i.HasValue)
+                        .Select(i => i.Value);
+
+            var fstBotID = botMessageIDs[0];
+
+            IEnumerable<long> authorIDs = new List<long>();
+            long? lastMessageID = 0;
+            var index = -1;
+
+            IEnumerable<Message> msgs = null;
+
+            while (index == -1 && authorIDs.Count() < _users.Count)
             {
-                return _api.Messages.GetHistory(new MessagesGetHistoryParams { PeerId = 2000000000 + _chatID, Count = 1 }).Messages.Last().Id;
+                var arg = new MessagesGetHistoryParams
+                {
+                    PeerId = ChatID,
+                    Count = 20,
+                    StartMessageId = lastMessageID == 0 ? null : lastMessageID,
+                    Offset = lastMessageID == 0 ? 0 : 1
+                };
+
+                msgs = _api.Messages.GetHistory(arg).Messages;
+                index = msgs.Select(m => m.Id).ToList().IndexOf(fstBotID);
+
+                if (index == -1)
+                    authorIDs = authorIDs.Concat(ms2AIDs(msgs)).Distinct();
+
+                lastMessageID = msgs.Last().Id;
             }
-            catch
-            {
-                Logger.WriteInLog(_logPath, "Неудача при получении последнего сообщения.");
-                Thread.Sleep(fiveMinutes);
-                return getLastMessageID_withoutLog();
-            }
+
+            if (authorIDs.Count() < _users.Count)
+                authorIDs = authorIDs.Concat(ms2AIDs(msgs.Take(index - 1))).Distinct();
+
+            return authorIDs;
         }
 
         static long sendMessage(string msg)
         {
-            Logger.WriteInLog(_logPath, string.Format("Отправка сообщения: \"{0}\".", msg));
-            var id = sendMessageWithoutLog(msg);
-            Logger.WriteInLog(_logPath, string.Format("Сообщение отправлено; его ID: {0}.", id));
+            Func<long> f = () => _api.Messages.Send(new MessagesSendParams { ChatId = _chatID, Message = msg });
+
+            _logger.WriteInLog(string.Format("Отправка сообщения: \"{0}\".", msg));
+            var id = perform(f, "Неудача при отправке сообщения.");
+            _logger.WriteInLog(string.Format("Сообщение отправлено; его ID: {0}.", id));
             return id;
         }
 
-        static long sendMessageWithoutLog(string msg)
+        static Typ perform<Typ>(Func<Typ> f, string errorMessage)
         {
             try
             {
-                return _api.Messages.Send(new MessagesSendParams { ChatId = _chatID, Message = msg });
+                return f();
             }
-            catch
+            catch (HttpRequestException)
             {
-                Logger.WriteInLog(_logPath, "Неудача при отправке сообщения.");
+                _logger.WriteInLog(errorMessage);
                 Thread.Sleep(fiveMinutes);
-                return sendMessageWithoutLog(msg);
+                return perform(f, errorMessage);
             }
         }
 
+        static string createAppeal(IEnumerable<long> ignoredUsers)
+        {
+            var users = _users.Where(u => ignoredUsers.All(i => i != u.Id));
+            var texts = users.Select(u => string.Format("@{0} ({1})", u.Domain, u.FirstName));
+
+            if (!texts.Any()) return string.Empty;
+            if (texts.Count() == 1) return texts.First();
+
+            var last = texts.Last();
+            var withoutLast = texts.Take(texts.Count() - 1);
+
+            return string.Format("{0} и {1}", string.Join(", ", withoutLast), last);
+
+        }
     }
 }
