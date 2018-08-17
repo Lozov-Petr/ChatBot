@@ -3,6 +3,7 @@ using System.Linq;
 using System.Collections.Generic;
 using System.Threading;
 using System.Net.Http;
+using System.IO;
 
 using VkNet;
 using VkNet.Model;
@@ -68,10 +69,10 @@ namespace ChatBot
 
         static void Main(string[] args)
         {
-            _logger = new Logger();
-
             try
             {
+                if (args.Length > 0) Directory.SetCurrentDirectory(args[0]);
+                _logger = new Logger();
                 BotMain(isTest);
             }
             catch (Exception e)
