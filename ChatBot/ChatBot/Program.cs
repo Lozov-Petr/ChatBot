@@ -9,6 +9,7 @@ using VkNet;
 using VkNet.Model;
 using VkNet.Model.RequestParams;
 using VkNet.Enums.Filters;
+using VkNet.Exception;
 
 namespace ChatBot
 
@@ -93,6 +94,7 @@ namespace ChatBot
 
             if (!isTest && isFirstWeek)
             {
+                _logger.WriteInLog("В прошлом месяце прогулка " + (wasWalkBeforeReCreate ? "" : "не") + "состоялась.");
                 Reader.ReCreate(_solutionFile);
                 _logger.WriteInLog("Обновление информации о прогулке в начале месяца.");
             }
@@ -200,7 +202,7 @@ namespace ChatBot
             }
 
             if (authorIDs.Count() < _users.Count)
-                authorIDs = authorIDs.Concat(ms2AIDs(msgs.Take(index - 1))).Distinct();
+                authorIDs = authorIDs.Concat(ms2AIDs(msgs.Take(index))).Distinct();
 
             return authorIDs;
         }
@@ -221,9 +223,9 @@ namespace ChatBot
             {
                 return f();
             }
-            catch (HttpRequestException)
+            catch (Exception e) when (e is HttpRequestException || e is CaptchaNeededException)
             {
-                _logger.WriteInLog(errorMessage);
+                _logger.WriteInLog(errorMessage + " Exception type: " + e.GetType().ToString() + ".");
                 Thread.Sleep(fiveMinutes);
                 return perform(f, errorMessage);
             }
