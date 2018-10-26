@@ -79,9 +79,18 @@ namespace ChatBot
         {
             try
             {
-                if (args.Length > 0) Directory.SetCurrentDirectory(args[0]);
                 _logger = new Logger();
-                BotMain(isTest);
+                if (args.Length > 0)
+                {
+                    Directory.SetCurrentDirectory(args[0]);
+                    _logger.WriteInLog(string.Format("Запуск бота в заданной при вызове папке: {0}", Directory.GetCurrentDirectory()));
+                }
+                else
+                {
+                    _logger.WriteInLog(string.Format("Запуск бота в текущей папке: {0}", Directory.GetCurrentDirectory()));
+                }
+
+                BotMain();
             }
             catch (Exception e)
             {
@@ -89,37 +98,36 @@ namespace ChatBot
             }
         }
 
-        static void BotMain(bool isTest)
+        static void BotMain()
         {
             _logger.WriteInLog(string.Format("Начало работы для чата #{0} (для бота - #{1}).", _myChatID, _botChatID));
+            if (!readSettings()) return;
+            initApi();
+
+            var cmds = getCommands(m => m.FromId == -_botID);
+            var alredyWalks = cmds.Any(isAlreadyWalkedCmd);
+
+            var solution = new WalkSolution(_solutionFile);
+            if (alredyWalks) solution.WasWalk = true;
 
             var isFirstWeek = DateTime.Now.Day <= 7;
 
-            var wasWalkBeforeReCreate = Reader.ReadFrom(_solutionFile);
+            var wasWalkBeforeReCreate = solution.WasWalk;
 
             if (!isTest && isFirstWeek)
             {
                 _logger.WriteInLog("В прошлом месяце прогулка " + (wasWalkBeforeReCreate ? "" : "не") + "состоялась.");
-                Reader.ReCreate(_solutionFile);
+                solution.ReCreate();
                 _logger.WriteInLog("Обновление информации о прогулке в начале месяца.");
             }
 
-            var wasWalk = Reader.ReadFrom(_solutionFile);
-
-            if (!isTest && wasWalk)
+            if (!isTest && solution.WasWalk)
             {
                 _logger.WriteInLog("Прогулка уже состоялась. Завершение работы бота.");
                 return;
             }
 
             _logger.WriteInLog("Оповещение необходимо.");
-            if (!readSettings()) return;
-
-            _myApi = new VkApi();
-            _myApi.Authorize(new ApiAuthParams { AccessToken = _myAccessToken });
-
-            _botApi = new VkApi();
-            _botApi.Authorize(new ApiAuthParams { AccessToken = _botAccessToken });
 
             initUsers();
 
@@ -138,7 +146,7 @@ namespace ChatBot
                     _logger.WriteInLog("Не все пользователи написали в чате.");
                     var msgTemplate = _users.Count - authors.Count() == 1 ? _restMessagesSingular[i] : _restMessagesPlural[i];
                     var appeal = createAppeal(authors);
-                    var id = sendMessage(string.Format(msgTemplate, appeal));
+                    sendMessage(string.Format(msgTemplate, appeal));
                 }
                 else
                 {
@@ -189,6 +197,15 @@ namespace ChatBot
             return true;
         }
 
+        static void initApi()
+        {
+            _myApi = new VkApi();
+            _myApi.Authorize(new ApiAuthParams { AccessToken = _myAccessToken });
+
+            _botApi = new VkApi();
+            _botApi.Authorize(new ApiAuthParams { AccessToken = _botAccessToken });
+        }
+
         static void initUsers()
         {
             Func<IEnumerable<User>> get = () =>
@@ -199,6 +216,61 @@ namespace ChatBot
             var botIndex = _users.FindIndex(u => u.Id == _botID);
             if (botIndex >= 0) _users.RemoveAt(botIndex);
             _logger.WriteInLog(string.Format("В чате #{0} учавствуют: {1}.", _myChatID, createAppeal(new List<long>())));
+        }
+
+        static IEnumerable<Message> getCommands(Predicate<Message> stopMessagePred)
+        {
+            _logger.WriteInLog("Начат поиск команд в чате.");
+            var cmds = perform(() => getCommands_loc(stopMessagePred), "Неудача при поиске команд в чате.");
+            _logger.WriteInLog("Завершён поиск команд в чате.");
+            return cmds;
+        }
+
+        static IEnumerable<Message> getCommands_loc(Predicate<Message> stopMessagePred)
+        {
+            IEnumerable<Message> cmds = new List<Message>();
+
+            long? lastMessageID = 0;
+            var index = -1;
+            IEnumerable<Message> msgs = null;
+
+            while (index == -1)
+            {
+                var arg = new MessagesGetHistoryParams
+                {
+                    PeerId = MyChatID,
+                    Count = 20,
+                    StartMessageId = lastMessageID == 0 ? null : lastMessageID,
+                    Offset = lastMessageID == 0 ? 0 : 1
+                };
+
+                msgs = _myApi.Messages.GetHistory(arg).Messages;
+                index = msgs.ToList().FindIndex(stopMessagePred);
+                msgs = index == -1 ? msgs : msgs.Take(index);
+                cmds = msgs.Where(isCommand).Reverse().Concat(cmds);
+
+                if (index == -1) lastMessageID = msgs.Last().Id;
+            }
+
+            return cmds;
+        }
+
+        static bool isAlreadyWalkedCmd(Message cmd)
+        {
+            var body = getNormalForm(cmd.Body);
+            return body.Contains("гуляли") && !body.Contains("негуляли") && !body.Contains("непогуляли");
+        }
+
+        static string getNormalForm(string msg)
+        {
+            msg = msg.ToLower();
+            msg = new string(msg.Where(c => c != ' ' && c != '\n' && c != '\r').ToArray());
+            return msg;
+        }
+
+        static bool isCommand(Message msg)
+        {
+            return msg.Body.Contains(string.Format("club{0}", _botID));
         }
 
         static long findLastBotMsgID()
@@ -269,15 +341,11 @@ namespace ChatBot
 
                 msgs = _myApi.Messages.GetHistory(arg).Messages;
                 index = msgs.Select(m => m.Id).ToList().IndexOf(fstBotID);
+                msgs = index == -1 ? msgs : msgs.Take(index);
+                authorIDs = authorIDs.Concat(ms2AIDs(msgs)).Distinct();
 
-                if (index == -1)
-                    authorIDs = authorIDs.Concat(ms2AIDs(msgs)).Distinct();
-
-                lastMessageID = msgs.Last().Id;
+                if (index == -1) lastMessageID = msgs.Last().Id;
             }
-
-            if (authorIDs.Count() < _users.Count)
-                authorIDs = authorIDs.Concat(ms2AIDs(msgs.Take(index))).Distinct();
 
             return authorIDs;
         }
@@ -301,7 +369,9 @@ namespace ChatBot
             catch (Exception e) when (e is HttpRequestException || e is CaptchaNeededException)
             {
                 _logger.WriteInLog(errorMessage + " Exception type: " + e.GetType().ToString() + ".");
+                _logger.WriteInLog("Ожидание повторной попытки.");
                 Thread.Sleep(fiveMinutes);
+                _logger.WriteInLog("Повторпная попытка.");
                 return perform(f, errorMessage);
             }
         }
