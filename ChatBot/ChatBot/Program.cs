@@ -43,7 +43,10 @@ namespace ChatBot
                 "{0}, я сдаюсь... Я так и не смог привлечь ваше внимание... Напишу в этот чат на следующей неделе."
             };
 
-        const string _goodMessage  = "БОТ:\nВы начали коммуницировать.\nМоя задача выполнена!";
+        const string _alreadyWalksMessage = "Прошу прощения за беспокойство! Оказывается, вы уже гуляли в этом месяце.";
+        const string _shutUpMessage = "Хорошо-хорошо... Более Вас не беспокою... Напишу на следующей неделе.";
+
+        const string _goodMessage  = "Вы начали коммуницировать.\nМоя задача выполнена!";
 
         const string _solutionFile = "PeterSolution.txt";
 
@@ -82,15 +85,18 @@ namespace ChatBot
                 _logger = new Logger();
                 if (args.Length > 0)
                 {
+                    var start_directory = Directory.GetCurrentDirectory();
                     Directory.SetCurrentDirectory(args[0]);
-                    _logger.WriteInLog(string.Format("Запуск бота в заданной при вызове папке: {0}", Directory.GetCurrentDirectory()));
+                    _logger.WriteInLog(string.Format("Запуск бота из папки: {0}.", start_directory));
+                    _logger.WriteInLog(string.Format("Запуск бота в заданной при вызове в папке: {0}.", Directory.GetCurrentDirectory()));
                 }
                 else
                 {
-                    _logger.WriteInLog(string.Format("Запуск бота в текущей папке: {0}", Directory.GetCurrentDirectory()));
+                    _logger.WriteInLog(string.Format("Запуск бота в текущей папке: {0}.", Directory.GetCurrentDirectory()));
                 }
 
                 BotMain();
+                _logger.WriteInLog("Работа бота завершена.");
             }
             catch (Exception e)
             {
@@ -105,10 +111,14 @@ namespace ChatBot
             initApi();
 
             var cmds = getCommands(m => m.FromId == -_botID);
-            var alredyWalks = cmds.Any(isAlreadyWalkedCmd);
+            var alreadyWalks = cmds.Any(isAlreadyWalkedCmd);
+
+            if (alreadyWalks) _logger.WriteInLog("В чате найдена команда, подтверждающая прогулку в этом месяце.");
+            else _logger.WriteInLog("В чате не найдена команда, подтверждающая прогулку в этом месяце.");
+
 
             var solution = new WalkSolution(_solutionFile);
-            if (alredyWalks) solution.WasWalk = true;
+            if (alreadyWalks) solution.WasWalk = true;
 
             var isFirstWeek = DateTime.Now.Day <= 7;
 
@@ -138,6 +148,23 @@ namespace ChatBot
             for (int i = 0; i < _maxRepeats; ++i)
             {
                 Thread.Sleep(oneHour);
+                cmds = getCommands(m => m.FromId == -_botID);
+
+                if (cmds.Any(isAlreadyWalkedCmd))
+                {
+                    _logger.WriteInLog("В чате найдена команда, подтверждающая прогулку в этом месяце.");
+                    solution.WasWalk = true;
+                    sendMessage(_alreadyWalksMessage);
+                    return;
+                }
+
+                if (cmds.All(isShutUpCmd))
+                {
+                    _logger.WriteInLog("В чате найдена команда, насильно завершающая бота.");
+                    sendMessage(_shutUpMessage);
+                    return;
+                }
+
 
                 var authors = getUsersAfterBot(fstBotMsgID);
 
@@ -163,6 +190,8 @@ namespace ChatBot
             var bat = "bot_access_token";
             var bid = "bot_id";
 
+            _logger.WriteInLog("Начато чтение данных из конфигурационного файла.");
+
             _myAccessToken = ConfigurationManager.AppSettings[mat];
             if (string.IsNullOrEmpty(_myAccessToken))
             {
@@ -174,7 +203,7 @@ namespace ChatBot
             _botAccessToken = ConfigurationManager.AppSettings[bat];
             if (string.IsNullOrEmpty(_botAccessToken))
             {
-                var msg = "Access Token сообщества (\"{0}\") не обнаружен в конфигурационном файле. Дальнейцая работа невозможна.";
+                var msg = "Access Token сообщества (\"{0}\") не обнаружен в конфигурационном файле. Дальнейщая работа невозможна.";
                 _logger.WriteInLog(string.Format(msg, bat));
                 return false;
             }
@@ -182,28 +211,33 @@ namespace ChatBot
             var botIdStr = ConfigurationManager.AppSettings[bid];
             if (string.IsNullOrEmpty(botIdStr))
             {
-                var msg = "Id сообщества (\"{0}\") не обнаружено в конфигурационном файле. Дальнейцая работа невозможна.";
+                var msg = "Id сообщества (\"{0}\") не обнаружено в конфигурационном файле. Дальнейщая работа невозможна.";
                 _logger.WriteInLog(string.Format(msg, bid));
                 return false;
             }
 
             if (!long.TryParse(botIdStr, out _botID))
             {
-                var msg = "Id сообщества (\"{0}\") должно быть числом. Дальнейцая работа невозможна.";
+                var msg = "Id сообщества (\"{0}\"), записанное в конфигурационном файле, должно быть числом. Дальнейщая работа невозможна.";
                 _logger.WriteInLog(string.Format(msg, bid));
                 return false;
             }
 
+            _logger.WriteInLog("Закончено чтение данных из конфигурационного файла.");
             return true;
         }
 
         static void initApi()
         {
+            _logger.WriteInLog("Начата инициализация VK API.");
+
             _myApi = new VkApi();
             _myApi.Authorize(new ApiAuthParams { AccessToken = _myAccessToken });
 
             _botApi = new VkApi();
             _botApi.Authorize(new ApiAuthParams { AccessToken = _botAccessToken });
+
+            _logger.WriteInLog("Закончена инициализация VK API.");
         }
 
         static void initUsers()
@@ -259,6 +293,19 @@ namespace ChatBot
         {
             var body = getNormalForm(cmd.Body);
             return body.Contains("гуляли") && !body.Contains("негуляли") && !body.Contains("непогуляли");
+        }
+
+        static bool isShutUpCmd(Message cmd)
+        {
+            var body = getNormalForm(cmd.Body);
+            return
+                body.Contains("замолчи") ||
+                body.Contains("отстань") ||
+                body.Contains("заткнись") ||
+                body.Contains("угомонись") ||
+                body.Contains("напишипозже") ||
+                body.Contains("напишипотом") ||
+                body.Contains("напишичерезнеделю");
         }
 
         static string getNormalForm(string msg)
@@ -350,14 +397,13 @@ namespace ChatBot
             return authorIDs;
         }
 
-        static long sendMessage(string msg)
+        static void sendMessage(string msg)
         {
             Func<long> f = () => _botApi.Messages.Send(new MessagesSendParams { ChatId = _botChatID, Message = msg });
 
             _logger.WriteInLog(string.Format("Отправка сообщения: \"{0}\".", msg));
-            var id = perform(f, "Неудача при отправке сообщения.");
-            _logger.WriteInLog(string.Format("Сообщение отправлено; его ID: {0}.", id));
-            return id;
+            perform(f, "Неудача при отправке сообщения.");
+            _logger.WriteInLog("Сообщение отправлено.");
         }
 
         static Typ perform<Typ>(Func<Typ> f, string errorMessage)

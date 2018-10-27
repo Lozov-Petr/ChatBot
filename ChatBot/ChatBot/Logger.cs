@@ -14,9 +14,6 @@ namespace ChatBot
             _path = string.Format("Logs/Log {0}-{1}-{2}--{3}-{4}-{5}.log",
                 now.Year, Create2Digits(now.Month), Create2Digits(now.Day),
                 Create2Digits(now.Hour), Create2Digits(now.Minute), Create2Digits(now.Second));
-            var stream = File.Create(_path);
-            stream.Close();
-
         }
 
         public void WriteInLog(string msg)
