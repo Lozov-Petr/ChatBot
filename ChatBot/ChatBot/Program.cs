@@ -44,7 +44,7 @@ namespace ChatBot
             };
 
         const string _alreadyWalksMessage = "Прошу прощения за беспокойство! Оказывается, вы уже гуляли в этом месяце.";
-        const string _shutUpMessage = "Хорошо-хорошо... Более Вас не беспокою... Напишу на следующей неделе.";
+        const string _shutUpMessage = "Хорошо-хорошо... Более вас не беспокою... Напишу на следующей неделе.";
 
         const string _goodMessage  = "Вы начали коммуницировать.\nМоя задача выполнена!";
 
@@ -158,7 +158,7 @@ namespace ChatBot
                     return;
                 }
 
-                if (cmds.All(isShutUpCmd))
+                if (cmds.Any(isShutUpCmd))
                 {
                     _logger.WriteInLog("В чате найдена команда, насильно завершающая бота.");
                     sendMessage(_shutUpMessage);
